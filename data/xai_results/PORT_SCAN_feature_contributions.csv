@@ -1,0 +1,16 @@
+feature,mean_abs_contribution
+total_bytes,1.2743357
+avg_packet_length,1.1130329
+forward_bytes,0.630038
+dst_port,0.39224184
+src_port,0.3415504
+max_packet_length,0.24587809
+total_packets,0.08432078
+flow_duration,0.016307944
+packet_rate,0.0068737506
+byte_rate,0.0026896778
+forward_packets,0.0
+min_packet_length,0.0
+avg_udp_length,0.0
+min_udp_length,0.0
+max_udp_length,0.0
