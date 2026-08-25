@@ -1,5 +1,10 @@
 import os
 import sys
+import json
+
+# ==========================================================
+# PROJECT PATH
+# ==========================================================
 
 sys.path.append(
     os.path.dirname(
@@ -10,12 +15,22 @@ sys.path.append(
 )
 
 from llm.llm_client import LLMClient
+from agent.tools import CyberInvestigationTools
 
 
 class CyberInvestigationAgent:
 
     def __init__(self):
+
+        # Llama / Groq client
         self.llm = LLMClient()
+
+        # Agent tools
+        self.tools = CyberInvestigationTools()
+
+    # ==========================================================
+    # MAIN INVESTIGATION FUNCTION
+    # ==========================================================
 
     def investigate(self, investigation_data):
 
@@ -33,6 +48,10 @@ class CyberInvestigationAgent:
             "network_flow",
             {}
         )
+
+        # ======================================================
+        # 1. EXTRACT ML INFORMATION
+        # ======================================================
 
         prediction = ml_prediction.get(
             "prediction",
@@ -54,259 +73,740 @@ class CyberInvestigationAgent:
             "UNKNOWN"
         )
 
-        llm_required = ml_prediction.get(
-            "llm_required",
-            False
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = 0.0
+
+        # ======================================================
+        # AGENT INVESTIGATION LOG
+        # ======================================================
+
+        investigation_steps = []
+
+        # ======================================================
+        # STEP 1 — ANALYZE XAI
+        # ======================================================
+
+        print("\n")
+        print("=" * 70)
+        print("AGENT STEP 1: ANALYZING XAI EVIDENCE")
+        print("=" * 70)
+
+        xai_analysis = self.tools.analyze_xai(
+            xai_evidence=xai_evidence,
+            network_flow=network_flow
         )
 
+        investigation_steps.append({
+
+            "step": 1,
+
+            "action": "ANALYZE_XAI",
+
+            "description":
+                "Agent analyzed the supplied SHAP/XAI evidence.",
+
+            "status": "completed"
+
+        })
+
+        # ======================================================
+        # STEP 2 — AGENT DECIDES WHETHER KNOWLEDGE IS NEEDED
+        # ======================================================
+
+        print("\n")
+        print("=" * 70)
+        print("AGENT STEP 2: DECIDING WHETHER ADDITIONAL KNOWLEDGE IS NEEDED")
+        print("=" * 70)
+
+        #
+        # This is the agent's investigation policy.
+        #
+        # We use the ML result and evidence availability
+        # to decide whether contextual cybersecurity
+        # knowledge should be retrieved.
+        #
+
+        xai_available = bool(xai_evidence)
+
+        knowledge_required = False
+
+        decision_reason = ""
+
+        if classification_status == "POSSIBLE_UNSEEN_ATTACK":
+
+            knowledge_required = True
+
+            decision_reason = (
+                "The ML system indicates a possible unseen "
+                "attack, so additional cybersecurity context "
+                "is required."
+            )
+
+        elif confidence < 80:
+
+            knowledge_required = True
+
+            decision_reason = (
+                "ML confidence is below the strong-confidence "
+                "threshold, so additional cybersecurity "
+                "context is required."
+            )
+
+        elif classification_status == "KNOWN" and xai_available:
+
+            knowledge_required = True
+
+            decision_reason = (
+                "The attack is a known class and XAI evidence "
+                "is available. The agent retrieves cybersecurity "
+                "context to support the investigation."
+            )
+
+        else:
+
+            knowledge_required = False
+
+            decision_reason = (
+                "The available evidence does not require "
+                "additional cybersecurity knowledge at this stage."
+            )
+
+        print(
+            "Knowledge required:",
+            knowledge_required
+        )
+
+        print(
+            "Decision reason:",
+            decision_reason
+        )
+
+        investigation_steps.append({
+
+            "step": 2,
+
+            "action": "DECIDE_INVESTIGATION",
+
+            "description":
+                decision_reason,
+
+            "knowledge_required":
+                knowledge_required,
+
+            "status":
+                "completed"
+
+        })
+
+        # ======================================================
+        # STEP 3 — SEARCH SECURITY KNOWLEDGE / MITRE
+        # ======================================================
+
+        print("\n")
+        print("=" * 70)
+        print("AGENT STEP 3: SECURITY KNOWLEDGE RETRIEVAL")
+        print("=" * 70)
+
+        retrieved_evidence = {}
+
+        if knowledge_required:
+
+            query = (
+                f"Find cybersecurity context relevant to "
+                f"{attack_type}. Provide only techniques and "
+                f"attack characteristics supported by the "
+                f"retrieved security knowledge."
+            )
+
+            retrieved_evidence = (
+                self.tools.search_security_knowledge(
+
+                    attack_type=str(
+                        attack_type
+                    ).lower().strip(),
+
+                    query=query
+
+                )
+            )
+
+            investigation_steps.append({
+
+                "step": 3,
+
+                "action":
+                    "SEARCH_SECURITY_KNOWLEDGE",
+
+                "description":
+                    "Agent retrieved cybersecurity knowledge "
+                    "relevant to the ML classification.",
+
+                "status":
+                    retrieved_evidence.get(
+                        "status",
+                        "completed"
+                    )
+
+            })
+
+        else:
+
+            retrieved_evidence = {
+
+                "tool":
+                    "SEARCH_SECURITY_KNOWLEDGE",
+
+                "status":
+                    "not_required",
+
+                "message":
+                    "Agent determined that additional "
+                    "security knowledge was not required."
+
+            }
+
+            investigation_steps.append({
+
+                "step": 3,
+
+                "action":
+                    "SEARCH_SECURITY_KNOWLEDGE",
+
+                "description":
+                    "Agent determined that security knowledge "
+                    "retrieval was not required.",
+
+                "status":
+                    "skipped"
+
+            })
+
+        # ======================================================
+        # STEP 4 — EVALUATE EVIDENCE
+        # ======================================================
+
+        print("\n")
+        print("=" * 70)
+        print("AGENT STEP 4: EVALUATING EVIDENCE")
+        print("=" * 70)
+
+        evidence_evaluation = (
+            self.tools.evaluate_evidence(
+
+                ml_prediction=
+                    ml_prediction,
+
+                xai_evidence=
+                    xai_evidence,
+
+                retrieved_evidence=
+                    retrieved_evidence
+
+            )
+        )
+
+        evidence_sufficient = (
+            evidence_evaluation.get(
+                "evidence_sufficient",
+                False
+            )
+        )
+
+        if evidence_sufficient:
+
+            agent_decision = (
+                "SUFFICIENT_EVIDENCE"
+            )
+
+        else:
+
+            agent_decision = (
+                "INSUFFICIENT_EVIDENCE"
+            )
+
+        investigation_steps.append({
+
+            "step": 4,
+
+            "action":
+                "EVALUATE_EVIDENCE",
+
+            "description":
+                "Agent evaluated ML, XAI and retrieved "
+                "security evidence.",
+
+            "evidence_sufficient":
+                evidence_sufficient,
+
+            "status":
+                "completed"
+
+        })
+
+        # ======================================================
+        # STEP 5 — FINAL AGENT DECISION
+        # ======================================================
+
+        print("\n")
+        print("=" * 70)
+        print("AGENT STEP 5: FINAL INVESTIGATION DECISION")
+        print("=" * 70)
+
+        print(
+            "Agent decision:",
+            agent_decision
+        )
+
+        investigation_steps.append({
+
+            "step": 5,
+
+            "action":
+                "FINAL_INVESTIGATION_DECISION",
+
+            "description":
+                "Agent completed the investigation and "
+                "prepared the evidence for final reporting.",
+
+            "decision":
+                agent_decision,
+
+            "status":
+                "completed"
+
+        })
+
+        # ======================================================
+        # PREPARE AGENT WORKFLOW
+        # ======================================================
+
+        agent_workflow = {
+
+            "ml_detection":
+                ml_prediction,
+
+            "xai_analysis":
+                xai_analysis,
+
+            "knowledge_retrieval":
+                retrieved_evidence,
+
+            "evidence_evaluation":
+                evidence_evaluation,
+
+            "agent_decision":
+                agent_decision
+
+        }
+
+        # ======================================================
+        # FINAL REPORT PROMPT
+        # ======================================================
+
         prompt = f"""
-You are a cybersecurity investigation assistant
-inside an AI-based cyber attack investigation platform.
+You are the final reporting component of an
+Agentic AI cybersecurity investigation system.
 
-The system uses an ML model for known attack
-classification and a Groq LLM for deeper investigation
-when the ML prediction is uncertain or potentially
-represents an unseen attack.
+The system has already completed an investigation.
 
-==================================================
-ML PREDICTION
-==================================================
-
-{ml_prediction}
+Your job is ONLY to generate a clear final
+cybersecurity investigation report from the
+ACTUAL evidence and ACTUAL agent workflow supplied below.
 
 ==================================================
-XAI EVIDENCE
+ML DETECTION
 ==================================================
 
-{xai_evidence}
+{json.dumps(
+    ml_prediction,
+    indent=4,
+    default=str
+)}
+
+==================================================
+XAI ANALYSIS
+==================================================
+
+{json.dumps(
+    xai_analysis,
+    indent=4,
+    default=str
+)}
+
+==================================================
+SECURITY KNOWLEDGE RETRIEVED BY THE AGENT
+==================================================
+
+{json.dumps(
+    retrieved_evidence,
+    indent=4,
+    default=str
+)}
+
+==================================================
+EVIDENCE EVALUATION
+==================================================
+
+{json.dumps(
+    evidence_evaluation,
+    indent=4,
+    default=str
+)}
+
+==================================================
+AGENT INVESTIGATION STEPS
+==================================================
+
+{json.dumps(
+    investigation_steps,
+    indent=4,
+    default=str
+)}
+
+==================================================
+AGENT DECISION
+==================================================
+
+{agent_decision}
 
 ==================================================
 NETWORK FLOW
 ==================================================
 
-{network_flow}
+{json.dumps(
+    network_flow,
+    indent=4,
+    default=str
+)}
 
 ==================================================
-IMPORTANT ARCHITECTURE RULES
+CRITICAL REPORTING RULES
 ==================================================
 
-The ML model is responsible for identifying known
-attack classes.
+1. The ML model is the primary classifier.
 
-The current ML prediction is:
+2. NEVER change the ML prediction.
 
-{prediction}
+3. SHAP/XAI explains the ML model's prediction.
 
-The ML confidence is:
+4. MITRE/security knowledge provides contextual
+   information only.
 
-{confidence}%
+5. Do NOT claim that a MITRE technique was observed
+   in the network traffic unless the supplied evidence
+   explicitly says so.
 
-The classification status is:
+6. Do NOT invent MITRE techniques.
 
-{classification_status}
+7. Do NOT invent packet behavior.
 
-LLM required:
+8. Do NOT invent authentication activity.
 
-{llm_required}
+9. Do NOT claim that credentials were guessed unless
+   authentication evidence is actually available.
 
---------------------------------------------------
-CASE 1: KNOWN ATTACK
---------------------------------------------------
+10. A high ML confidence does NOT automatically mean
+    the real-world attack is confirmed.
 
-If classification_status is "KNOWN" and the prediction
-is an attack:
+11. Clearly distinguish:
+       ML classification
+       XAI evidence
+       Agent investigation
+       MITRE context
+       Final assessment
 
-- Treat the ML prediction as the detected attack.
-- Do NOT replace the ML prediction.
-- Use XAI evidence to explain the prediction.
-- Do not introduce another attack as the detected attack.
-- Explain the network-flow characteristics using only
-  the supplied evidence.
+12. If only one network flow is available, mention
+    that as a limitation.
 
---------------------------------------------------
-CASE 2: NORMAL TRAFFIC
---------------------------------------------------
+13. Recommended actions must be defensive.
 
-If the ML prediction is BENIGN or NORMAL:
+14. Do not provide offensive attack instructions.
 
-- Treat the traffic as normal.
-- Do not invent an attack.
-- Explain why the model considers the traffic benign.
-- Mention limitations if confidence is low.
+15. Only describe agent actions that actually appear
+    in the AGENT INVESTIGATION STEPS.
 
---------------------------------------------------
-CASE 3: POSSIBLE UNSEEN ATTACK
---------------------------------------------------
-
-If classification_status is
-"POSSIBLE_UNSEEN_ATTACK":
-
-The ML model is uncertain about the exact attack type.
-
-In this case, investigate the supplied:
-
-- ML probabilities
-- confidence
-- probability margin
-- XAI evidence
-- network-flow characteristics
-
-You MAY identify a possible attack type that could
-explain the observed behavior.
-
-However:
-
-- Do NOT claim that the unseen attack is confirmed.
-- Use terms such as "possible", "potential",
-  "candidate", or "requires further investigation".
-- Do not invent evidence.
-- Do not pretend the ML model classified the unseen
-  attack.
-- Clearly distinguish the ML prediction from the
-  LLM's investigation hypothesis.
-
-The LLM is an investigation and reasoning component,
-not the ground-truth classifier.
+16. If MITRE retrieval returned no specific knowledge,
+    clearly state that.
 
 ==================================================
-SECURITY RULES
+RETURN EXACTLY THIS FORMAT
 ==================================================
 
-1. Never invent evidence.
-
-2. Never claim an attack is confirmed without evidence.
-
-3. Clearly distinguish ML prediction from LLM analysis.
-
-4. If confidence is low, explicitly state that.
-
-5. If the evidence is insufficient, state that.
-
-6. Use XAI evidence to support explanations.
-
-7. Do not provide offensive attack instructions.
-
-8. Recommended actions must be defensive.
-
-==================================================
-RETURN EXACTLY THESE SECTIONS
-==================================================
+# AI INVESTIGATION REPORT
 
 ## 1. ML DETECTION
 
-State exactly what the ML model predicted.
+Give:
 
-## 2. CONFIDENCE
+- Attack prediction
+- ML confidence
+- Classification status
 
-State the ML confidence and explain whether it is
-high, moderate, or low.
+Use exactly the supplied ML prediction.
 
-## 3. ATTACK STATUS
+---
 
-State whether the traffic is:
+## 2. WHY DID THE ML MODEL DETECT IT?
 
-- NORMAL
-- KNOWN ATTACK
-- POSSIBLE UNSEEN ATTACK
+Explain the important XAI/SHAP features.
 
-Do not confuse these categories.
+Use only the supplied XAI evidence.
 
-## 4. INVESTIGATION SUMMARY
+Do not invent explanations that require information
+not present in the evidence.
 
-Explain what the ML model detected and summarize
-the evidence.
+---
 
-## 5. XAI EVIDENCE
+## 3. XAI EVIDENCE
 
-Explain the important XAI features and their
-contribution to the ML result.
+List the most important features using:
 
-## 6. POSSIBLE ATTACK TYPE
+Feature → Value → SHAP contribution
 
-If the ML prediction is a known attack, state that
-known attack.
+Keep this concise.
 
-If the traffic is potentially an unseen attack,
-provide the most plausible attack type as an
-INVESTIGATION HYPOTHESIS only.
+Explain that these features influenced the ML
+model's prediction.
 
-If the evidence is insufficient, state:
+Do not say that SHAP independently proves the attack.
 
-"Unable to determine a possible unseen attack from
-the available evidence."
+---
 
-## 7. SEVERITY
+## 4. AGENT INVESTIGATION
 
-Give an appropriate severity:
+Briefly explain what the investigation agent did.
 
-LOW
-MEDIUM
-HIGH
-CRITICAL
+Do NOT list individual steps.
 
-Explain the reasoning.
+Write this as one concise paragraph explaining that:
 
-## 8. WHY THIS TRAFFIC IS SUSPICIOUS OR NORMAL
+- The agent analyzed the XAI evidence.
+- The agent decided whether additional cybersecurity
+  knowledge was required.
+- If required, the agent retrieved relevant security
+  knowledge from the available knowledge source.
+- The agent evaluated the available ML, XAI, and
+  retrieved evidence.
+- The agent produced a final evidence assessment.
 
-Explain the network-flow characteristics using only
-the supplied evidence.
+Then provide:
 
-## 9. RECOMMENDED INVESTIGATION STEPS
+**Agent Decision:** [actual agent decision]
 
-Provide defensive investigation steps appropriate
-to the detected or suspected behavior.
+Only describe actions that actually occurred.
+Do not invent agent actions.
 
-## 10. UNKNOWN OR UNCERTAIN BEHAVIOR
+Do not claim that the agent performed an action
+that is not present in the investigation steps.
 
-Clearly identify:
+---
 
-- low confidence
-- conflicting probabilities
-- weak XAI evidence
-- missing features
-- possible unseen attack
-- other limitations
+## 5. MITRE ATT&CK / SECURITY CONTEXT
 
-Do not hide uncertainty.
+Only report techniques or cybersecurity information
+that actually appears inside the retrieved evidence.
+
+For each retrieved technique provide:
+
+- Technique ID
+- Technique name
+- Brief relevance
+
+IMPORTANT:
+
+Say clearly that MITRE ATT&CK provides contextual
+knowledge and does not independently prove that the
+observed traffic is malicious.
+
+If no specific knowledge was retrieved, write:
+
+"No specific MITRE/security knowledge was retrieved
+for this investigation."
+
+---
+
+## 6. EVIDENCE EVALUATION
+
+Show:
+
+ML Evidence: Available / Not Available
+
+XAI Evidence: Available / Not Available
+
+Security Knowledge: Available / Not Available
+
+Overall Evidence:
+SUFFICIENT / INSUFFICIENT
+
+Then briefly explain why.
+
+Do not use the word "confirmed" unless the supplied
+evidence genuinely supports confirmation.
+
+---
+
+## 7. FINAL ASSESSMENT
+
+Give a short and clear final assessment.
+
+Use this type of wording:
+
+"The ML model classified the traffic as
+[ATTACK] with [CONFIDENCE]% confidence.
+The XAI evidence identifies the features that
+influenced this classification. The retrieved
+security knowledge provides relevant cybersecurity
+context. Therefore, the available evidence
+supports the ML classification, while additional
+evidence may be required for real-world confirmation."
+
+Adapt this to the actual evidence.
+
+---
+
+## 8. RECOMMENDED INVESTIGATION ACTIONS
+
+Give 4–6 defensive actions based only on the
+observed attack classification and available evidence.
+
+Examples:
+
+- Review relevant logs.
+- Correlate additional network flows.
+- Identify the destination service.
+- Monitor the source.
+- Review authentication activity if applicable.
+- Apply defensive controls if malicious behavior
+  is confirmed.
+
+Do not provide offensive instructions.
+
+---
+
+## 9. UNCERTAINTY AND LIMITATIONS
+
+Mention only actual limitations.
+
+Examples:
+
+- Single-flow analysis
+- Missing authentication logs
+- Missing payload information
+- Unknown destination service
+- Low confidence
+- Missing features
+- Insufficient evidence
+
+If no major uncertainty exists, say:
+
+"No major uncertainty was identified in the supplied
+ML/XAI evidence, although additional traffic and
+system logs can improve investigation confidence."
 
 ==================================================
-FINAL RULE
+FINAL REQUIREMENT
 ==================================================
 
-If the ML model predicts a known attack with strong
-confidence, do not replace it.
+The final report must be concise and easy to understand.
 
-If the ML model is uncertain and the classification
-status is POSSIBLE_UNSEEN_ATTACK, you may investigate
-a possible unseen attack, but clearly label it as an
-LLM-generated hypothesis and NOT a confirmed
-classification.
+Do NOT create unsupported claims.
+
+Do NOT add unrelated MITRE techniques.
+
+Do NOT turn MITRE context into proof.
+
+Do NOT make the LLM appear to have performed an action
+that the Agent did not actually perform.
+
+The report must clearly show:
+
+ML Detection
+      ↓
+XAI Explanation
+      ↓
+Agent Investigation
+      ↓
+Security Knowledge
+      ↓
+Evidence Evaluation
+      ↓
+Final Assessment
 """
 
+        # ======================================================
+        # CALL LLAMA
+        # ======================================================
+
+        print("\n")
+        print("=" * 70)
+        print("GENERATING FINAL AI INVESTIGATION REPORT")
+        print("=" * 70)
+
         response = self.llm.client.chat.completions.create(
+
             model=self.llm.model,
+
             messages=[
+
                 {
                     "role": "system",
+
                     "content": (
                         "You are a cybersecurity "
-                        "investigation assistant. "
-                        "The ML model handles known "
-                        "classification. When the ML "
-                        "model is uncertain, investigate "
-                        "possible unseen attacks using "
-                        "only the supplied evidence. "
-                        "Never present an LLM hypothesis "
-                        "as confirmed ground truth."
+                        "investigation reporting assistant. "
+                        "Use only supplied evidence. "
+                        "Never invent observations, "
+                        "MITRE techniques, or attack activity."
                     )
+
                 },
+
                 {
                     "role": "user",
+
                     "content": prompt
+
                 }
+
             ],
+
             temperature=0.0,
-            max_tokens=1500
+
+            max_tokens=1800
+
         )
 
-        return response.choices[0].message.content
+        final_report = (
+            response
+            .choices[0]
+            .message
+            .content
+        )
+
+        # ======================================================
+        # RETURN COMPLETE AGENT RESULT
+        # ======================================================
+
+        return {
+
+            "report":
+                final_report,
+
+            "investigation_steps":
+                investigation_steps,
+
+            "evidence_evaluation":
+                evidence_evaluation,
+
+            "retrieved_evidence":
+                retrieved_evidence,
+
+            "agentic":
+                True,
+
+            "agent_workflow":
+                agent_workflow
+
+        }
